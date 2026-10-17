@@ -1,0 +1,40 @@
+import { useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { colors } from '@/src/constants/colors';
+import { radii, spacing } from '@/src/constants/design';
+import type { FoodDraft, FoodMatch, PreparationState } from '@/src/types/food';
+import { calculateNutrition } from '@/src/utils/calculations';
+import { positiveNumber } from '@/src/utils/validation';
+
+const preparationOptions: [PreparationState, string][] = [['raw', 'Crudo'], ['cooked', 'Cocido'], ['baked', 'Horneado'], ['fried', 'Frito'], ['grilled', 'A la plancha'], ['unknown', 'Sin definir']];
+
+export function FoodItemEditor({ item, onChange, onRemove, onSearch }: { item: FoodDraft; onChange: (item: FoodDraft) => void; onRemove: () => void; onSearch?: (query: string) => Promise<FoodMatch[]> }) {
+  const [searching, setSearching] = useState(false);
+  const searchSequence = useRef(0);
+  const update = (patch: Partial<FoodDraft>) => onChange({ ...item, ...patch });
+  const updateNutrition = (key: 'calories' | 'protein' | 'carbohydrates' | 'fat', value: string) => update({ nutrition: { ...item.nutrition, [key]: positiveNumber(value) }, nutritionPer100g: undefined, nutritionSource: 'manual', verified: false, estimationMethod: 'manual', needsConfirmation: false });
+  const selectMatch = (match: FoodMatch) => update({ name: match.name, nutrition: calculateNutrition(item.grams, match.nutritionPer100g), nutritionPer100g: match.nutritionPer100g, matches: [], nutritionSource: match.source, sourceId: match.sourceId, barcode: match.barcode, preparationState: match.preparationState, dataQuality: match.dataQuality, verified: match.verified, estimationMethod: match.verified ? 'verified-food' : 'manual', needsConfirmation: item.grams <= 0 });
+  const search = async () => { if (!onSearch || !item.name.trim() || searching) return; const sequence = ++searchSequence.current; setSearching(true); try { const matches = await onSearch(item.name.trim()); if (sequence === searchSequence.current) update({ matches }); } finally { if (sequence === searchSequence.current) setSearching(false); } };
+  const editName = (name: string) => update({ name, nutrition: { calories: 0, protein: 0, carbohydrates: 0, fat: 0, fiber: null }, nutritionPer100g: undefined, matches: [], nutritionSource: 'manual', verified: false, estimationMethod: 'manual', needsConfirmation: true });
+  const editPreparation = (preparationState: PreparationState) => update({ preparationState, needsConfirmation: item.grams <= 0 || !item.nutritionPer100g });
+  return <View style={styles.card}>
+    <View style={styles.header}><TextInput value={item.name} onChangeText={editName} style={styles.name} placeholder="Nombre del alimento" placeholderTextColor={colors.textMuted} /><Pressable onPress={onRemove} accessibilityRole="button" accessibilityLabel={`Eliminar ${item.name}`}><Text style={styles.remove}>Eliminar</Text></Pressable></View>
+    {onSearch && <Pressable style={styles.search} onPress={() => void search()} disabled={searching}><Text style={styles.searchText}>{searching ? 'Buscando coincidencias...' : 'Buscar fuente nutricional'}</Text></Pressable>}
+    {item.matches && item.matches.length > 0 && <View style={styles.matches}><Text style={styles.matchTitle}>Elige una coincidencia</Text>{item.matches.map((match) => <Pressable key={match.id} style={styles.match} onPress={() => selectMatch(match)}><Text style={styles.matchName}>{match.name}</Text><Text style={styles.matchMeta}>{match.source} · {match.preparationState} · {Math.round(match.nutritionPer100g.calories)} kcal/100 g</Text></Pressable>)}</View>}
+    <Text style={styles.label}>Preparación</Text><View style={styles.preparationRow}>{preparationOptions.map(([key, label]) => <Pressable key={key} onPress={() => editPreparation(key)} style={[styles.preparation, item.preparationState === key && styles.preparationActive]} accessibilityRole="button" accessibilityState={{ selected: item.preparationState === key }}><Text style={[styles.preparationText, item.preparationState === key && styles.preparationTextActive]}>{label}</Text></Pressable>)}</View>
+    <View style={styles.fields}><View style={styles.grams}><Text style={styles.label}>Cantidad confirmada</Text><View style={styles.gramsInput}><TextInput value={String(Math.round(item.grams))} onChangeText={(value) => { const grams = positiveNumber(value); update({ grams, nutrition: item.nutritionPer100g ? calculateNutrition(grams, item.nutritionPer100g) : item.nutrition, needsConfirmation: item.nutritionPer100g ? grams <= 0 : item.needsConfirmation }); }} keyboardType="decimal-pad" style={styles.input} /><Text style={styles.unit}>g</Text></View></View><Text style={[styles.verified, !item.verified && styles.manual]}>{item.verified ? '✓ Verificado' : 'Revisión manual'}</Text></View>
+    <View style={styles.macroRow}>{(['calories', 'protein', 'carbohydrates', 'fat'] as const).map((key) => <View style={styles.macro} key={key}><Text style={styles.label}>{key === 'calories' ? 'kcal' : key === 'protein' ? 'Prot.' : key === 'carbohydrates' ? 'Carb.' : 'Grasa'}</Text><TextInput value={String(Math.round(item.nutrition[key]))} onChangeText={(value) => updateNutrition(key, value)} keyboardType="decimal-pad" style={styles.inputSmall} /></View>)}</View>
+    <Text style={styles.source}>Fuente: {item.nutritionSource ?? 'manual'} · Estado: {item.dataQuality ?? 'unknown'}</Text>{item.needsConfirmation && <Text style={styles.warning}>Confirma el alimento, la cantidad y sus valores antes de guardar.</Text>}
+  </View>;
+}
+
+const styles = StyleSheet.create({
+  card: { backgroundColor: colors.surface, borderRadius: radii.lg, padding: spacing.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
+  header: { flexDirection: 'row', alignItems: 'center' }, name: { flex: 1, color: colors.primary, fontSize: 16, fontWeight: '800', paddingVertical: 2 }, remove: { color: colors.danger, fontSize: 12, fontWeight: '700' },
+  search: { alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.accent, borderRadius: radii.sm, paddingVertical: 8, paddingHorizontal: 11, marginTop: spacing.md }, searchText: { color: colors.accentDark, fontSize: 11, fontWeight: '800' },
+  matches: { marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm }, matchTitle: { color: colors.accentDark, fontSize: 11, fontWeight: '800', marginBottom: 6 }, match: { backgroundColor: colors.lavenderSoft, borderRadius: radii.sm, padding: 10, marginBottom: 6 }, matchName: { color: colors.primary, fontSize: 12, fontWeight: '800' }, matchMeta: { color: colors.textMuted, fontSize: 10, marginTop: 3 },
+  label: { color: colors.textMuted, fontSize: 11, marginBottom: 6 }, preparationRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, preparation: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.pill, paddingVertical: 6, paddingHorizontal: 9 }, preparationActive: { backgroundColor: colors.primarySoft, borderColor: colors.success }, preparationText: { color: colors.textMuted, fontSize: 10, fontWeight: '700' }, preparationTextActive: { color: colors.success },
+  fields: { flexDirection: 'row', alignItems: 'flex-end', marginTop: spacing.lg }, grams: { flex: 1 }, gramsInput: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surfaceElevated, borderRadius: radii.sm, paddingRight: 10 }, input: { flex: 1, color: colors.primary, paddingHorizontal: 10, paddingVertical: 9, fontSize: 15 }, unit: { color: colors.textMuted, fontSize: 12, fontWeight: '700' }, verified: { color: colors.success, fontSize: 11, marginLeft: 10, marginBottom: 10, fontWeight: '700' }, manual: { color: colors.warning },
+  macroRow: { flexDirection: 'row', gap: 8, marginTop: spacing.lg }, macro: { flex: 1 }, inputSmall: { color: colors.primary, backgroundColor: colors.surfaceElevated, borderRadius: radii.sm, paddingHorizontal: 7, paddingVertical: 8, fontSize: 13 }, source: { color: colors.textMuted, fontSize: 10, marginTop: spacing.md }, warning: { color: colors.warning, fontSize: 11, marginTop: spacing.md, lineHeight: 16 },
+});
